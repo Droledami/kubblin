@@ -1,8 +1,12 @@
 using System.Collections;
+using System.Net.Sockets;
+using System.Net;
 using TMPro;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
+using Unity.Netcode.Transports.UTP;
+using System;
 
 public class GameManager : NetworkBehaviour
 {
@@ -25,6 +29,14 @@ public class GameManager : NetworkBehaviour
     public static readonly Color PLAYER2_COLOR = new Color(1, 0, 0);
     #endregion
 
+    [SerializeField] TMP_Text ipAddressText;
+    [SerializeField] TMP_InputField ip;
+    [SerializeField] GameObject connectionUI;
+    [SerializeField] TMP_Text connectionText;
+
+    [SerializeField] string ipAddress;
+    [SerializeField] UnityTransport transport;
+
     public static GameManager Instance;
 
     public GameObject hostButton;
@@ -45,6 +57,8 @@ public class GameManager : NetworkBehaviour
     public NetworkVariable<ulong> PlayerTurn = new NetworkVariable<ulong>();
     public NetworkVariable<bool> HasGameStarted = new NetworkVariable<bool>();
 
+    private bool wantsToJoin = false;
+
     #region UNITY_LIFECYCLE
     private void Awake()
     {
@@ -56,6 +70,16 @@ public class GameManager : NetworkBehaviour
         {
             Destroy(this);
         }
+    }
+
+    private void OnEnable()
+    {
+        transport.OnTransportEvent += OnTransportEventFired;
+    }
+
+    private void OnDisable()
+    {
+        transport.OnTransportEvent -= OnTransportEventFired;
     }
 
     public override void OnNetworkSpawn()
@@ -97,9 +121,37 @@ public class GameManager : NetworkBehaviour
     #endregion
 
     #region UI_CHANGES
-    public void OnHostButtonClicked() => NetworkManager.Singleton.StartHost();
+    public void OnHostButtonClicked()
+    {
+        NetworkManager.Singleton.StartHost();
+        GetLocalIPAddress();
+    }
 
-    public void OnClientButtonClicked() => NetworkManager.Singleton.StartClient();
+    public void OnConnectionButtonClicked()
+    {
+        ipAddress = ip.text;
+        SetIpAddress();
+        connectionText.gameObject.SetActive(true);
+        if (!NetworkManager.Singleton.StartClient())
+        {
+            //Adress is not an IP adress. Can't join, reactivate the UI.
+            return;
+        }
+        connectionUI.SetActive(false);
+        wantsToJoin = false;
+    }
+
+    public void OnJoinButtonClicked()
+    {
+        wantsToJoin = true;
+        connectionUI.SetActive(true);
+    }
+
+    public void OnReturnButtonClicked()
+    {
+        connectionUI.SetActive(false);
+        wantsToJoin = false;
+    }
 
     //Used in Update flow, changes the UI depending on the connection status and game state
     void UpdateUI()
@@ -108,6 +160,11 @@ public class GameManager : NetworkBehaviour
         {
             SetStartButtons(false);
             SetStatusText("NetworkManager not found");
+            return;
+        }
+        if (wantsToJoin)
+        {
+            SetStartButtons(false);
             return;
         }
 
@@ -382,6 +439,43 @@ public class GameManager : NetworkBehaviour
         {
             return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y) + Mathf.Abs(a.z - b.z);
         }
+    }
+
+    /* Gets the Ip Address of your connected network and
+	shows on the screen in order to let other players join
+	by inputing that Ip in the input field */
+    // ONLY FOR HOST SIDE 
+    public string GetLocalIPAddress()
+    {
+        var host = Dns.GetHostEntry(Dns.GetHostName());
+        ipAddressText.gameObject.SetActive(true);
+        foreach (var ip in host.AddressList)
+        {
+            if (ip.AddressFamily == AddressFamily.InterNetwork)
+            {
+                ipAddressText.text = $"IP Hôte (vous): {ip}";
+                ipAddress = ip.ToString();
+                return ip.ToString();
+            }
+        }
+        throw new System.Exception("No network adapters with an IPv4 address in the system!");
+    }
+
+    /* Sets the Ip Address of the Connection Data in Unity Transport
+	to the Ip Address which was input in the Input Field */
+    // ONLY FOR CLIENT SIDE
+    public void SetIpAddress()
+    {
+        transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        transport.ConnectionData.Address = ipAddress;
+    }
+
+    private void OnTransportEventFired(NetworkEvent eventType, ulong clientId, ArraySegment<byte> payload, float receiveTime)
+    {
+        if (eventType == NetworkEvent.Disconnect)
+            connectionText.gameObject.SetActive(false);
+        if (eventType == NetworkEvent.Connect)
+            connectionText.gameObject.SetActive(false);
     }
     #endregion
 }
